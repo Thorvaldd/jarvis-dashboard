@@ -6,6 +6,8 @@ const { el, T, config, isNarrow, createSectionTitle, addHoverEffect, nodeFs, nod
 
 const PROJECT_COLORS = [T.accent, T.purple, T.green, T.gold, T.orange, T.red];
 const TOP_ENTRIES_LIMIT = config.widgets?.rizeWeek?.topEntries || 8;
+const PROJECT_MAPPING = (config.rize && config.rize.projectMapping) || {};
+const CONFIG_TZ = (config.rize && config.rize.timezone) || null;
 
 // ── Lazy-load rize-client onto ctx (kept on ctx so weekly-review reuses the cache) ──
 async function getRizeClient() {
@@ -63,14 +65,17 @@ function fmtHours(h) {
   return Math.round(h * 60) + "m";
 }
 
-function fmtEntryTime(iso) {
-  // ISO timestamp → "Mon 09:21" (local time)
+function fmtEntryTime(iso, tz) {
+  // ISO timestamp → "Mon 09:21" rendered in the configured timezone (falls
+  // back to the system tz when none is available).
   if (!iso) return "";
+  const dayOpts = { weekday: "short" };
+  const timeOpts = { hour: "2-digit", minute: "2-digit", hour12: false };
+  if (tz) { dayOpts.timeZone = tz; timeOpts.timeZone = tz; }
   const d = new Date(iso);
-  const day = d.toLocaleDateString(undefined, { weekday: "short" });
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${day} ${hh}:${mm}`;
+  const day = d.toLocaleDateString(undefined, dayOpts);
+  const time = d.toLocaleTimeString(undefined, timeOpts);
+  return `${day} ${time}`;
 }
 
 // ── State ──
@@ -168,9 +173,11 @@ function renderError(msg) {
   }, msg));
 }
 
-function renderData(data) {
+function renderData(data, client) {
   body.innerHTML = "";
-  const { entries, projectSummary, totalHours } = data;
+  const { entries, totalHours, userTimezone, truncated } = data;
+  const tz = CONFIG_TZ || userTimezone || null;
+  const projectSummary = client.bucketEntries(entries, PROJECT_MAPPING);
 
   // Total
   const totalRow = el("div", {
@@ -188,7 +195,13 @@ function renderData(data) {
   }, fmtHours(totalHours)));
   totalRow.appendChild(el("div", {
     fontSize: "11px", color: T.textMuted,
-  }, `${entries.length} entries`));
+  }, `${entries.length} entries${truncated ? " (truncated)" : ""}`));
+  if (tz) {
+    totalRow.appendChild(el("div", {
+      fontSize: "10px", color: T.textDim, marginLeft: "auto",
+      fontFamily: "'SF Mono', 'Fira Code', monospace",
+    }, tz));
+  }
   body.appendChild(totalRow);
 
   if (totalHours === 0) {
@@ -242,9 +255,10 @@ function renderData(data) {
 
     const list = el("div", { display: "flex", flexDirection: "column", gap: "4px" });
     const topEntries = [...entries]
-      .sort((a, b) => b.durationSeconds - a.durationSeconds)
+      .sort((a, b) => (b.duration_seconds || 0) - (a.duration_seconds || 0))
       .slice(0, TOP_ENTRIES_LIMIT);
     topEntries.forEach(e => {
+      const bucketName = client.classify(e, PROJECT_MAPPING);
       const row = el("div", {
         display: "grid",
         gridTemplateColumns: isNarrow ? "auto 1fr" : "90px 60px 1fr",
@@ -255,24 +269,24 @@ function renderData(data) {
       if (!isNarrow) {
         row.appendChild(el("span", {
           color: T.textMuted, fontFamily: "'SF Mono', 'Fira Code', monospace",
-        }, fmtEntryTime(e.startTime)));
+        }, fmtEntryTime(e.start_time, tz)));
         row.appendChild(el("span", {
           color: T.accent, fontFamily: "'SF Mono', 'Fira Code', monospace",
           textAlign: "right",
-        }, fmtHours(e.durationHours)));
+        }, fmtHours(e.duration_hours)));
       } else {
         const meta = el("span", {
           color: T.textMuted, fontFamily: "'SF Mono', 'Fira Code', monospace",
           fontSize: "10px",
-        }, `${fmtEntryTime(e.startTime)} · ${fmtHours(e.durationHours)}`);
+        }, `${fmtEntryTime(e.start_time, tz)} · ${fmtHours(e.duration_hours)}`);
         row.appendChild(meta);
       }
       const titleCell = el("span", { color: T.text, lineHeight: "1.4" });
-      titleCell.appendChild(document.createTextNode(e.title));
-      if (e.projectName) {
+      titleCell.appendChild(document.createTextNode(e.title || "(untitled)"));
+      if (bucketName && bucketName !== "Untagged") {
         titleCell.appendChild(el("span", {
           color: T.textMuted, marginLeft: "6px", fontSize: "10px",
-        }, `· ${e.projectName}`));
+        }, `· ${bucketName}`));
       }
       row.appendChild(titleCell);
       list.appendChild(row);
@@ -295,7 +309,7 @@ async function render() {
 
   const result = await client.fetchWeek(fmtYmd(monday), fmtYmd(sunday));
   if (result.error) { renderError(result.error); return; }
-  renderData(result);
+  renderData(result, client);
 }
 
 prevBtn.addEventListener("click", () => {

@@ -12,6 +12,8 @@ const OUTPUT_FOLDER = reviewCfg.outputFolder || "Weekly";
 const MEMORY_FILE = reviewCfg.memoryFile || "memory.md";
 const PROMPTS_PER_SESSION = reviewCfg.promptsPerSessionInReview || 5;
 const PRESERVE_AFTER = reviewCfg.preserveSectionsAfter || "## Notes";
+const PROJECT_MAPPING = (config.rize && config.rize.projectMapping) || {};
+const CONFIG_TZ = (config.rize && config.rize.timezone) || null;
 
 // ── Lazy-load rize-client ──
 async function getRizeClient() {
@@ -243,38 +245,38 @@ function fmtHoursDecimal(h) {
   return Math.round(h * 60) + "m";
 }
 
-function fmtEntryDateTime(iso) {
+function fmtEntryDateTime(iso, tz) {
   if (!iso) return "";
+  const dayOpts = { weekday: "short" };
+  const dateOpts = { month: "short", day: "numeric" };
+  const timeOpts = { hour: "2-digit", minute: "2-digit", hour12: false };
+  if (tz) { dayOpts.timeZone = tz; dateOpts.timeZone = tz; timeOpts.timeZone = tz; }
   const d = new Date(iso);
-  const day = d.toLocaleDateString(undefined, { weekday: "short" });
-  const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${day} ${date} ${hh}:${mm}`;
+  const day = d.toLocaleDateString(undefined, dayOpts);
+  const date = d.toLocaleDateString(undefined, dateOpts);
+  const time = d.toLocaleTimeString(undefined, timeOpts);
+  return `${day} ${date} ${time}`;
 }
 
-function composeMarkdown({ key, mondayDate, sundayDate, claude, rize, littlebird, memory }) {
+function composeMarkdown({ key, mondayDate, sundayDate, claude, rize, rizeBuckets, claudeBuckets, littlebird, memory, tz }) {
   const startStr = fmtYmd(mondayDate);
   const endStr = fmtYmd(sundayDate);
 
-  // Build a unified per-project list combining Rize + Claude data
   const allProjectNames = new Set();
-  if (rize.projectSummary) {
-    for (const p of rize.projectSummary) allProjectNames.add(p.name);
-  }
-  for (const name of Object.keys(claude.perProject || {})) allProjectNames.add(name);
+  for (const b of rizeBuckets) allProjectNames.add(b.name);
+  for (const name of Object.keys(claudeBuckets)) allProjectNames.add(name);
 
   const merged = Array.from(allProjectNames).map(name => {
-    const rizeProj = (rize.projectSummary || []).find(p => p.name === name);
-    const ccProj = claude.perProject[name];
+    const rb = rizeBuckets.find(b => b.name === name);
+    const cb = claudeBuckets[name];
     return {
       name,
-      rizeHours: rizeProj?.hours || 0,
-      rizePct: rizeProj?.pct || 0,
-      rizeEntries: (rize.entries || []).filter(e => (e.projectName || "(no project)") === name),
-      ccSessions: ccProj?.sessions || 0,
-      ccMinutes: ccProj?.minutes || 0,
-      ccPrompts: ccProj?.prompts || [],
+      rizeHours: rb?.hours || 0,
+      rizePct: rb?.pct || 0,
+      rizeEntries: rb?.entries || [],
+      ccSessions: cb?.sessions || 0,
+      ccMinutes: cb?.minutes || 0,
+      ccPrompts: cb?.prompts || [],
     };
   }).sort((a, b) => {
     const aw = a.rizeHours * 60 + a.ccMinutes / 2;
@@ -305,7 +307,7 @@ function composeMarkdown({ key, mondayDate, sundayDate, claude, rize, littlebird
   lines.push("");
   lines.push("## Summary");
   lines.push("");
-  lines.push(`- **Claude Code:** ${claude.totalSessions} sessions across ${Object.keys(claude.perProject).length} projects, ~${ccHours}h`);
+  lines.push(`- **Claude Code:** ${claude.totalSessions} sessions across ${Object.keys(claudeBuckets).length} projects, ~${ccHours}h`);
   if (rize.error) {
     lines.push(`- **Rize:** _unavailable — ${rize.error}_`);
   } else {
@@ -345,7 +347,7 @@ function composeMarkdown({ key, mondayDate, sundayDate, claude, rize, littlebird
       lines.push(`<details><summary>Rize entries (${proj.rizeEntries.length})</summary>`);
       lines.push("");
       for (const e of proj.rizeEntries) {
-        lines.push(`- ${fmtEntryDateTime(e.startTime)} · ${fmtHoursDecimal(e.durationHours)} · ${e.title}`);
+        lines.push(`- ${fmtEntryDateTime(e.start_time, tz)} · ${fmtHoursDecimal(e.duration_hours)} · ${e.title || "(untitled)"}`);
       }
       lines.push("");
       lines.push("</details>");
@@ -546,15 +548,29 @@ btn.addEventListener("click", async () => {
 
   // 2. Rize
   setStatus("Fetching Rize…", T.accent);
-  let rize = { entries: [], projectSummary: [], totalHours: 0 };
+  let rize = { entries: [], totalHours: 0, userTimezone: null };
+  let client = null;
   try {
-    const client = await getRizeClient();
+    client = await getRizeClient();
     const result = await client.fetchWeek(fmtYmd(monday), fmtYmd(sunday));
-    if (result.error) rize = { entries: [], projectSummary: [], totalHours: 0, error: result.error };
+    if (result.error) rize = { entries: [], totalHours: 0, userTimezone: null, error: result.error };
     else rize = result;
   } catch (e) {
-    rize = { entries: [], projectSummary: [], totalHours: 0, error: e.message };
+    rize = { entries: [], totalHours: 0, userTimezone: null, error: e.message };
   }
+
+  // Bucket Rize entries through the configured projectMapping. If the client
+  // failed to load entirely, fall back to inline classification using the
+  // same logic so we still produce a partial note.
+  const rizeBuckets = client
+    ? client.bucketEntries(rize.entries, PROJECT_MAPPING)
+    : [];
+
+  // Remap Claude per-project labels through the same mapping so a Rize
+  // bucket "AcmeCorp" merges with a Claude dir labeled "acmecorp".
+  const claudeBuckets = remapClaudeProjects(claude.perProject || {}, client);
+
+  const tz = CONFIG_TZ || rize.userTimezone || null;
 
   // 3. Littlebird paste + memory.md
   const littlebird = (ctx._littlebirdPaste?.getForWeek?.(key)) || readLittlebirdLs(key);
@@ -566,7 +582,7 @@ btn.addEventListener("click", async () => {
   try {
     markdown = composeMarkdown({
       key, mondayDate: monday, sundayDate: sunday,
-      claude, rize, littlebird, memory,
+      claude, rize, rizeBuckets, claudeBuckets, littlebird, memory, tz,
     });
   } catch (e) {
     setStatus(`Compose failed: ${e.message}`, T.red);
@@ -594,6 +610,32 @@ btn.addEventListener("click", async () => {
 function readLittlebirdLs(weekKey) {
   try { return window.localStorage.getItem(`littlebird-paste:${weekKey}`) || ""; }
   catch { return ""; }
+}
+
+// Run each Claude project label through the same projectMapping the Rize
+// client uses so "acmecorp" (dir-derived) merges with "AcmeCorp"
+// (Rize bucket). Falls back to the original label when no mapping matches.
+function remapClaudeProjects(perProject, client) {
+  const out = {};
+  for (const [label, data] of Object.entries(perProject)) {
+    let target = label;
+    if (client && typeof client.classify === "function") {
+      const synthetic = { project_name: null, title: label, description: "", tag_suggestions: [] };
+      const classified = client.classify(synthetic, PROJECT_MAPPING);
+      if (classified && classified !== "Untagged") target = classified;
+    }
+    if (!out[target]) {
+      out[target] = { sessions: 0, minutes: 0, prompts: [] };
+    }
+    out[target].sessions += data.sessions || 0;
+    out[target].minutes += data.minutes || 0;
+    for (const p of (data.prompts || [])) out[target].prompts.push(p);
+  }
+  // Re-sort prompts within merged buckets
+  for (const b of Object.values(out)) {
+    b.prompts.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
+  }
+  return out;
 }
 
 return section;
