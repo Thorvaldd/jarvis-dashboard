@@ -127,6 +127,28 @@ All widgets are independently configurable and removable. Control order and layo
 - Module loading via `new Function("ctx", code)` — no import/export
 - [Architecture docs](docs/architecture/README.md)
 
+### Weekly Review System
+
+A companion workflow on top of the dashboard that aggregates Claude Code
+sessions, Rize time tracking, a manual Littlebird paste, and your vault's
+`memory.md` into a single weekly markdown note in `Weekly/YYYY-Www.md`.
+
+| Widget | Purpose |
+|---|---|
+| **Rize Week** | Renders the current ISO week's Rize summary (per-project bars + top entries) with prev/next/today selector. |
+| **Littlebird Paste** | Plain textarea — paste your Littlebird daily journal here; persisted per ISO week in `localStorage`. |
+| **Weekly Review** | Single button that gathers everything and writes `Weekly/<week>.md`, preserving any text below `## Notes` on regeneration. |
+
+**Setup:**
+
+1. Copy `src/config/secrets.example.json` to `~/.jarvis/secrets.json` and add
+   your Rize API token (get one at https://rize.io account settings).
+2. Reload the dashboard. The Rize widget will fetch the current week.
+3. Click **Generate weekly review** to write `Weekly/<week>.md` into your
+   vault and open it.
+
+Configuration lives under `rize.*` and `weeklyReview.*` in `config.json`.
+
 ### Companion Server
 - WebSocket server for mobile client support
 - TLS with self-signed CA certificate chain
