@@ -176,6 +176,9 @@ const WIDGET_MAP = {
   "mission-control":       "widgets/mission-control/index.js",
   "recent-activity":       "widgets/recent-activity/index.js",
   "jarvis-voice-command":  "widgets/voice-command/index.js",
+  "rize-week":             "widgets/rize-week/index.js",
+  "littlebird-paste":      "widgets/littlebird-paste/index.js",
+  "weekly-review":         "widgets/weekly-review/index.js",
   "footer":                "widgets/footer/index.js",
 };
 
