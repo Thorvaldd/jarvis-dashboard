@@ -16,6 +16,10 @@ src/config/config.json
 # Local config (network credentials — host, token)
 src/config/config.local.json
 
+# Weekly review system secrets (Rize API token)
+src/config/secrets.json
+.jarvis/secrets.json
+
 # Tauri (macOS app)
 macos/src-tauri/target/
 macos/node_modules/
