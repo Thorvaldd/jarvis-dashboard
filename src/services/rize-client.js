@@ -40,10 +40,10 @@ function readToken() {
 }
 
 const cache = new Map();
-let cachedTimezone = undefined; // undefined = not probed; null = probed and unavailable
+let cachedUser = undefined; // undefined = not probed; null = probed and unavailable; otherwise { email, timezone }
 
 function cacheKey(start, end) { return `${start}|${end}`; }
-function clearCache() { cache.clear(); cachedTimezone = undefined; }
+function clearCache() { cache.clear(); cachedUser = undefined; }
 
 async function postGraphQL(token, query, variables) {
   const url = apiBaseUrl.replace(/\/$/, "") + graphqlPath;
@@ -97,40 +97,54 @@ async function postGraphQL(token, query, variables) {
   });
 }
 
-// ── GraphQL: time entries query ──
-// Field names in the request follow standard GraphQL camelCase. The response
-// is normalized to snake_case via normalizeNode() so the rest of the system
-// can treat camelCase / snake_case schemas interchangeably.
+// ── GraphQL queries ──
+//
+// The Rize schema (introspected) exposes timeEntries at the Query root, not
+// nested under currentUser. The User type only carries identity + timezone.
+// Workspace admins would otherwise see team-wide entries; we filter by
+// creatorEmails so a personal weekly review stays personal.
+//
+// The response is normalized to snake_case via normalizeNode() so widgets can
+// treat any schema variant the same way.
 const TIME_ENTRIES_QUERY = `
-  query TimeEntriesForRange($startTime: ISO8601DateTime!, $endTime: ISO8601DateTime!, $cursor: String) {
-    currentUser {
-      timeEntries(startTime: $startTime, endTime: $endTime, first: ${PAGE_SIZE}, after: $cursor) {
-        nodes {
-          id
-          startTime
-          endTime
-          title
-          description
-          durationSeconds
-          billable
-          source
-          status
-          project { id name }
-          task { id name }
-          client { id name }
-          tagSuggestions {
-            tagName
-            tagType
-            confidenceScore
-          }
+  query TimeEntriesForRange(
+    $startTime: ISO8601DateTime!,
+    $endTime: ISO8601DateTime!,
+    $cursor: String,
+    $emails: [String!]
+  ) {
+    timeEntries(
+      startTime: $startTime,
+      endTime: $endTime,
+      first: ${PAGE_SIZE},
+      after: $cursor,
+      creatorEmails: $emails
+    ) {
+      nodes {
+        id
+        startTime
+        endTime
+        title
+        description
+        duration
+        billable
+        source
+        status
+        project { id name }
+        task { id name }
+        client { id name }
+        tagSuggestions {
+          tagName
+          tagType
+          confidenceScore
         }
-        pageInfo { endCursor hasNextPage }
       }
+      pageInfo { endCursor hasNextPage }
     }
   }
 `;
 
-const TIMEZONE_QUERY = `query Tz { currentUser { timezone } }`;
+const USER_INFO_QUERY = `query MeInfo { currentUser { email timezone } }`;
 
 // ── Response normalization (handles snake_case OR camelCase responses) ──
 function pick(node, snake, camel) {
@@ -144,7 +158,11 @@ function normalizeNode(node) {
   const task = node.task || {};
   const cli = node.client || {};
   const tagSugs = pick(node, "tag_suggestions", "tagSuggestions") || [];
-  const durationSeconds = pick(node, "duration_seconds", "durationSeconds") || 0;
+  // Rize's TimeEntry.duration is an Int of seconds. The MCP exposes the same
+  // value as `duration_seconds`, so accept any of the three field names.
+  const durationSeconds = pick(node, "duration_seconds", "durationSeconds")
+    || node.duration
+    || 0;
   return {
     id: node.id,
     start_time: pick(node, "start_time", "startTime"),
@@ -178,25 +196,19 @@ function toIsoUtc(dateStr, endOfDay) {
   return dt.toISOString();
 }
 
-async function probeTimezone(token) {
-  if (cachedTimezone !== undefined) return cachedTimezone;
-  // Allow a static override from config.rize.timezone before hitting the API.
-  if (rizeCfg.timezone) {
-    cachedTimezone = rizeCfg.timezone;
-    return cachedTimezone;
-  }
+async function probeUser(token) {
+  if (cachedUser !== undefined) return cachedUser;
   try {
-    const res = await postGraphQL(token, TIMEZONE_QUERY, {});
-    if (res?.errors) {
-      cachedTimezone = null;
-      return null;
-    }
+    const res = await postGraphQL(token, USER_INFO_QUERY, {});
+    if (res?.errors) { cachedUser = null; return null; }
     const cu = res?.data?.currentUser || res?.data?.current_user;
-    cachedTimezone = (cu && (cu.timezone || cu.time_zone)) || null;
+    cachedUser = cu
+      ? { email: cu.email || null, timezone: cu.timezone || cu.time_zone || null }
+      : null;
   } catch {
-    cachedTimezone = null;
+    cachedUser = null;
   }
-  return cachedTimezone;
+  return cachedUser;
 }
 
 async function fetchWeek(startDate, endDate) {
@@ -211,6 +223,14 @@ async function fetchWeek(startDate, endDate) {
     const startTimeIso = toIsoUtc(startDate, false);
     const endTimeIso = toIsoUtc(endDate, true);
 
+    // Probe the current user once so we can scope timeEntries to ourselves
+    // and surface their timezone. Workspace admins would otherwise see
+    // team-wide entries.
+    const me = await probeUser(auth.token);
+    const emails = me?.email ? [me.email] : null;
+    const cfgTz = rizeCfg.timezone || null;
+    const userTimezone = cfgTz || me?.timezone || null;
+
     const allNodes = [];
     let cursor = null;
     let pageCount = 0;
@@ -220,16 +240,16 @@ async function fetchWeek(startDate, endDate) {
         startTime: startTimeIso,
         endTime: endTimeIso,
         cursor,
+        emails,
       });
       if (res?.errors && res.errors.length) {
         const msg = res.errors.map(e => e.message).join("; ");
         return { error: `Rize API error: ${msg}` };
       }
-      const cu = res?.data?.currentUser || res?.data?.current_user;
-      if (!cu) {
-        return { error: "Rize API returned no currentUser data. Check token permissions." };
+      const te = res?.data?.timeEntries || res?.data?.time_entries;
+      if (!te) {
+        return { error: "Rize API returned no timeEntries data. Check token permissions." };
       }
-      const te = cu.timeEntries || cu.time_entries || {};
       const nodes = te.nodes || te.entries || [];
       for (const n of nodes) allNodes.push(normalizeNode(n));
       const pi = te.pageInfo || te.page_info || {};
@@ -242,12 +262,12 @@ async function fetchWeek(startDate, endDate) {
 
     allNodes.sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
 
-    const userTimezone = await probeTimezone(auth.token);
     const totalSeconds = allNodes.reduce((s, e) => s + (e.duration_seconds || 0), 0);
     const value = {
       entries: allNodes,
       totalHours: totalSeconds / 3600,
-      userTimezone: userTimezone || null,
+      userTimezone,
+      userEmail: me?.email || null,
       pageCount,
       truncated: pageCount >= MAX_PAGES,
     };
