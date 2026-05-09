@@ -147,7 +147,64 @@ sessions, Rize time tracking, a manual Littlebird paste, and your vault's
 3. Click **Generate weekly review** to write `Weekly/<week>.md` into your
    vault and open it.
 
-Configuration lives under `rize.*` and `weeklyReview.*` in `config.json`.
+#### `rize.projectMapping`
+
+Most Rize entries arrive with `project_name = null` because the AI hasn't been
+explicitly told which Rize Project they belong to. The dashboard re-buckets
+entries through `config.rize.projectMapping` using this fallback chain:
+
+1. `entry.project_name` if set
+2. First `tag_suggestions[].tag_name` matching any keyword (case-sensitive)
+3. Substring match (case-insensitive) on `entry.title + entry.description`
+4. `"Untagged"`
+
+```json
+"rize": {
+  "projectMapping": {
+    "AcmeCorp": ["AC-", "AcmeCorp", "Acme project"],
+    "ExampleCo": ["EC-", "ExampleCo"],
+    "DemoLLC": ["DL-", "DemoLLC"]
+  }
+}
+```
+
+The same mapping is applied to Claude Code project directory labels in
+`weekly-review`, so `~/.claude/projects/-Users-…-acmecorp` collapses into
+the `AcmeCorp` bucket alongside Rize entries.
+
+Order matters — the first project whose keyword matches wins, so put the most
+specific keyword first within each project's array.
+
+#### `rize.timezone`
+
+Rize timestamps are stored UTC. The widgets render them in
+`config.rize.timezone` if set (e.g. `"Europe/Kyiv"`), otherwise fall back to
+the timezone reported by `currentUser.timezone`, otherwise the system
+timezone. Pin this in config when you sync the vault across devices.
+
+#### Pagination
+
+`fetchWeek` walks the Rize cursor up to 20 pages (≈2000 entries/week) so
+totals are accurate even on heavy weeks. The `truncated: true` flag in the
+response surfaces a "(truncated)" tag in the widget if you somehow blow
+past that.
+
+#### v2: drop the GraphQL client and route through the Anthropic API
+
+Since you already have the Rize MCP connected in Claude Desktop, a future
+iteration could replace `rize-client.js` with a small bridge that asks
+Claude (via the Anthropic API + your existing MCP setup) to fetch the week
+and return JSON. Trade-offs:
+
+- ✅ One less credential surface (no Rize bearer token); reuses MCP auth
+- ✅ Graceful when Rize changes their API shape — the MCP layer handles it
+- ❌ Adds an Anthropic API key dependency and per-call cost
+- ❌ Slower (model round-trip vs direct HTTP)
+- ❌ Companion server work to expose an HTTP endpoint the widget can hit
+
+Direct GraphQL is the right call for v1; revisit if Rize's GraphQL schema
+keeps drifting or if pinning the bearer token across devices becomes a
+chore.
 
 ### Companion Server
 - WebSocket server for mobile client support

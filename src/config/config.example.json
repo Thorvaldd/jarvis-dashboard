@@ -163,7 +163,13 @@
     "apiBaseUrl": "https://api.rize.io",
     "graphqlPath": "/api/v1/graphql",
     "cacheDurationMs": 300000,
-    "secretsFile": "~/.jarvis/secrets.json"
+    "secretsFile": "~/.jarvis/secrets.json",
+    "timezone": null,
+    "projectMapping": {
+      "AcmeCorp": ["AC-", "AcmeCorp", "Acme project"],
+      "ExampleCo": ["EC-", "ExampleCo"],
+      "DemoLLC": ["DL-", "DemoLLC"]
+    }
   },
   "weeklyReview": {
     "outputFolder": "Weekly",
