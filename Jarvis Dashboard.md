@@ -39,6 +39,25 @@ function loadModule(relativePath) {
 // ── Load config ──
 const config = JSON.parse(nodeFs.readFileSync(nodePath.join(srcDir, "config", "config.json"), "utf8"));
 
+// ── Merge config.local.json (gitignored, holds user-specific overrides) ──
+function deepMergeConfig(target, source) {
+  const result = { ...target };
+  for (const key of Object.keys(source)) {
+    if (source[key] && typeof source[key] === "object" && !Array.isArray(source[key])) {
+      result[key] = deepMergeConfig(result[key] || {}, source[key]);
+    } else {
+      result[key] = source[key];
+    }
+  }
+  return result;
+}
+let _localConfig = {};
+try {
+  _localConfig = JSON.parse(nodeFs.readFileSync(
+    nodePath.join(srcDir, "config", "config.local.json"), "utf8"));
+  Object.assign(config, deepMergeConfig(config, _localConfig));
+} catch {}
+
 // ── Load core: theme ──
 const themeResult = await loadModule("core/theme.js")({ container, config });
 const { T, isNarrow, isMedium, isWide, CARD_PAD, FONT_SM, leafEl } = themeResult;
@@ -115,24 +134,7 @@ ctx.cleanups.push(() => ctx.sessionManager.cleanup());
 
 // ── Load network client for remote voice mode ──
 if (config.widgets?.voiceCommand?.mode === "remote") {
-  let localConfig = {};
-  try {
-    localConfig = JSON.parse(nodeFs.readFileSync(
-      nodePath.join(srcDir, "config", "config.local.json"), "utf8"));
-    function deepMerge(target, source) {
-      const result = { ...target };
-      for (const key of Object.keys(source)) {
-        if (source[key] && typeof source[key] === "object" && !Array.isArray(source[key])) {
-          result[key] = deepMerge(result[key] || {}, source[key]);
-        } else {
-          result[key] = source[key];
-        }
-      }
-      return result;
-    }
-    Object.assign(config, deepMerge(config, localConfig));
-  } catch {}
-  ctx._localConfig = localConfig;
+  ctx._localConfig = _localConfig;
   ctx.networkClient = await loadModule("services/network-client.js")(ctx);
   ctx.cleanups.push(() => ctx.networkClient.cleanup());
 }
