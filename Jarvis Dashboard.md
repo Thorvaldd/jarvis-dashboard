@@ -206,6 +206,36 @@ const layout = config.layout || [
 
 const gridRefs = [];
 
+// Render one widget by type, isolated in a try/catch so a single failure
+// can't black-hole the rest of the dashboard. On failure, render a small
+// red error card with the message so the user can see which widget broke.
+async function renderWidgetSafe(widgetType, target, opts) {
+  try {
+    const widget = await loadModule(WIDGET_MAP[widgetType])(ctx);
+    if (widget && widget.style) {
+      if (opts && opts.zeroBottomMargin) widget.style.marginBottom = "0";
+      widget.style.contain = "layout style";
+      if (DEFERRED_WIDGETS.has(widgetType)) {
+        widget.style.contentVisibility = "auto";
+      }
+    }
+    target.appendChild(widget);
+  } catch (e) {
+    console.error(`[JARVIS] Widget '${widgetType}' failed to render:`, e);
+    const errEl = el("div", {
+      border: `1px solid ${T.red}55`,
+      background: "rgba(231,76,60,0.06)",
+      color: T.red,
+      borderRadius: "8px",
+      padding: "10px 14px",
+      fontSize: "12px",
+      fontFamily: "'SF Mono', 'Fira Code', monospace",
+      marginBottom: opts && opts.zeroBottomMargin ? "0" : "16px",
+    }, `[${widgetType}] ${e && e.message ? e.message : String(e)}`);
+    target.appendChild(errEl);
+  }
+}
+
 for (const entry of layout) {
   if (entry.type === "row" && entry.widgets) {
     const row = el("div", {
@@ -219,28 +249,13 @@ for (const entry of layout) {
     });
     for (const widgetType of entry.widgets) {
       if (WIDGET_MAP[widgetType]) {
-        const widget = await loadModule(WIDGET_MAP[widgetType])(ctx);
-        if (widget.style) {
-          widget.style.marginBottom = "0";
-          widget.style.contain = "layout style";
-          if (DEFERRED_WIDGETS.has(widgetType)) {
-            widget.style.contentVisibility = "auto";
-          }
-        }
-        row.appendChild(widget);
+        await renderWidgetSafe(widgetType, row, { zeroBottomMargin: true });
       }
     }
     wrapper.appendChild(row);
     gridRefs.push({ el: row, columns: entry.columns || 2 });
   } else if (WIDGET_MAP[entry.type]) {
-    const widget = await loadModule(WIDGET_MAP[entry.type])(ctx);
-    if (widget.style) {
-      widget.style.contain = "layout style";
-      if (DEFERRED_WIDGETS.has(entry.type)) {
-        widget.style.contentVisibility = "auto";
-      }
-    }
-    wrapper.appendChild(widget);
+    await renderWidgetSafe(entry.type, wrapper, { zeroBottomMargin: false });
   }
 }
 
