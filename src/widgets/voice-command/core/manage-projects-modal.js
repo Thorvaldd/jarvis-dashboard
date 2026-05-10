@@ -98,7 +98,7 @@ function createManageProjectsModal() {
     modalEl._renderSections = () => {
       body.innerHTML = "";
       body.appendChild(renderTrackedSection());
-      // Available section appended in next task
+      body.appendChild(renderAvailableSection());
     };
 
     function renderTrackedSection() {
@@ -157,6 +157,13 @@ function createManageProjectsModal() {
       labelHost.appendChild(dirText);
       row.appendChild(labelHost);
 
+      // Auto-focus rename if a freshly-added entry is requesting it
+      if (modalEl._focusRenameForDir === proj.dir) {
+        modalEl._focusRenameForDir = null;
+        // Defer to after this row is in the DOM
+        setTimeout(() => beginRename(labelHost, labelText, idx, proj), 0);
+      }
+
       // Rename
       const renameBtn = el("span", {
         cursor: "pointer", color: T.textMuted, fontSize: "13px",
@@ -184,6 +191,106 @@ function createManageProjectsModal() {
       removeBtn.addEventListener("click", () => beginRemove(row, idx));
       row.appendChild(removeBtn);
 
+      return row;
+    }
+
+    function renderAvailableSection() {
+      const wrapper = el("div", { display: "flex", flexDirection: "column", gap: "8px" });
+
+      const header = el("div", {
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+      });
+      const trackedDirs = sessionManager.tracked.map(p => p.dir);
+      const rootPath = expandHome(config.projects?.rootPath || "~/.claude/projects/");
+      const available = projectsStore.scanAvailable(rootPath, trackedDirs);
+
+      header.appendChild(el("div", {
+        fontSize: "11px", fontWeight: "600", letterSpacing: "0.5px",
+        color: T.textMuted, textTransform: "uppercase",
+      }, `Available (${available.length} not tracked)`));
+
+      // Folder-picker button
+      const pickWrap = el("label", {
+        cursor: "pointer", fontSize: "11px", fontWeight: "600",
+        color: T.accent, padding: "4px 10px",
+        border: `1px solid ${T.accent}55`, borderRadius: "6px",
+      }, "Pick folder");
+      const folderInput = el("input", { display: "none" });
+      folderInput.type = "file";
+      folderInput.setAttribute("webkitdirectory", "");
+      folderInput.setAttribute("directory", "");
+      folderInput.addEventListener("change", (e) => {
+        const files = e.target.files;
+        if (!files || files.length === 0) return;
+        const f = files[0];
+        // In Electron (Obsidian's runtime), File.path is the absolute path.
+        const fileAbs = f.path || "";
+        if (!fileAbs) return; // Not in Electron — bail.
+        // webkitRelativePath has form "<picked>/<sub>/.../file.ext".
+        // Climb (segs.length - 1) levels with dirname to land on the picked dir itself.
+        const np = ctx.nodePath;
+        const segs = (f.webkitRelativePath || f.name).split("/");
+        let folderAbs = fileAbs;
+        for (let i = 0; i < segs.length - 1; i++) folderAbs = np.dirname(folderAbs);
+        const encoded = projectsStore.encodePath(folderAbs);
+        const label = projectsStore.decodeLabel(encoded);
+        sessionManager.addProject({ dir: encoded, label });
+        folderInput.value = ""; // reset so re-picking the same folder retriggers change
+      });
+      pickWrap.appendChild(folderInput);
+      header.appendChild(pickWrap);
+      wrapper.appendChild(header);
+
+      if (available.length === 0) {
+        wrapper.appendChild(el("div", { color: T.textMuted, fontSize: "12px" },
+          "No untracked projects found in rootPath."));
+        return wrapper;
+      }
+
+      const list = el("div", {
+        display: "flex", flexDirection: "column",
+        border: `1px solid ${T.panelBorder}`, borderRadius: "8px", overflow: "hidden",
+      });
+      available.forEach((proj, i) => list.appendChild(renderAvailableRow(proj, i, available.length)));
+      wrapper.appendChild(list);
+      return wrapper;
+    }
+
+    function renderAvailableRow(proj, i, total) {
+      const row = el("div", {
+        display: "flex", alignItems: "center", gap: "10px",
+        padding: "10px 12px",
+        borderBottom: i < total - 1 ? `1px solid ${T.panelBorder}` : "none",
+      });
+      row.appendChild(el("span", {
+        width: "6px", height: "6px", borderRadius: "50%",
+        background: T.textMuted, flexShrink: "0",
+      }));
+      const labelHost = el("div", { flex: "1", minWidth: "0" });
+      labelHost.appendChild(el("div", {
+        fontSize: "12px", fontWeight: "600", color: T.text,
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+      }, proj.label));
+      labelHost.appendChild(el("div", {
+        fontSize: "10px", color: T.textMuted,
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        fontFamily: "'SF Mono', 'Fira Code', monospace",
+      }, proj.dir));
+      row.appendChild(labelHost);
+
+      const addBtn = el("span", {
+        cursor: "pointer", fontSize: "11px", fontWeight: "600",
+        color: T.accent, padding: "4px 10px",
+        border: `1px solid ${T.accent}55`, borderRadius: "6px",
+      }, "+ Add");
+      addBtn.addEventListener("click", () => {
+        const next = sessionManager.addProject({ dir: proj.dir, label: proj.label });
+        // After re-render (triggered by addProject → notifyListeners), find the new row
+        // and put its rename input into focus. We do this by storing a flag the renderer
+        // picks up.
+        modalEl._focusRenameForDir = proj.dir;
+      });
+      row.appendChild(addBtn);
       return row;
     }
 
