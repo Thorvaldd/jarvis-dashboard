@@ -32,3 +32,6 @@ ios/build/
 ios/DerivedData/
 ios/web/src
 ios/web/shared
+
+# Test sandbox
+tests/.tmp/
