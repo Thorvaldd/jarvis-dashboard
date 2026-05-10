@@ -310,6 +310,7 @@ function createManageProjectsModal() {
       });
       no.addEventListener("click", () => {
         confirm.remove();
+        buttons.forEach(b => { b.style.display = ""; });
       });
       confirm.appendChild(yes);
       confirm.appendChild(no);
