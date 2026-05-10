@@ -183,6 +183,7 @@ const WIDGET_MAP = {
   "rize-week":             "widgets/rize-week/index.js",
   "littlebird-paste":      "widgets/littlebird-paste/index.js",
   "weekly-review":         "widgets/weekly-review/index.js",
+  "manage-projects":       "widgets/manage-projects/index.js",
   "footer":                "widgets/footer/index.js",
 };
 
