@@ -284,11 +284,11 @@ function createManageProjectsModal() {
         border: `1px solid ${T.accent}55`, borderRadius: "6px",
       }, "+ Add");
       addBtn.addEventListener("click", () => {
-        const next = sessionManager.addProject({ dir: proj.dir, label: proj.label });
-        // After re-render (triggered by addProject → notifyListeners), find the new row
-        // and put its rename input into focus. We do this by storing a flag the renderer
-        // picks up.
+        // Set the flag BEFORE addProject so the synchronous re-render (triggered by
+        // notifyListeners inside addProject) can pick it up and focus the new row's
+        // rename input.
         modalEl._focusRenameForDir = proj.dir;
+        sessionManager.addProject({ dir: proj.dir, label: proj.label });
       });
       row.appendChild(addBtn);
       return row;
