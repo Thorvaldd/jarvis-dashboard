@@ -145,8 +145,12 @@ runTest("encodePath produces dash-encoded form", () => {
 // ── 9. decodeLabel derives the last segment ──
 runTest("decodeLabel returns last segment of dash-encoded dir", () => {
   const { store } = bootstrapStore("t9");
-  assert.strictEqual(store.decodeLabel("-Users-foo-my-project"), "my-project");
+  // The encoding is lossy: encodePath replaces every "/" with "-", so
+  // hyphens in original folder names are unrecoverable. decodeLabel
+  // takes the last "-"-separated token as a best-effort label.
+  assert.strictEqual(store.decodeLabel("-Users-foo-bar"), "bar");
   assert.strictEqual(store.decodeLabel("-foo"), "foo");
+  assert.strictEqual(store.decodeLabel("-tmp-myrepo"), "myrepo");
 });
 
 // ── 10. scanAvailable lists dirs minus already-tracked ──
