@@ -253,6 +253,36 @@ return function createSessionManagerCore({ persistSave, persistLoad }) {
     listeners = [];
   }
 
+  // ── Tracked-projects mutation (delegates to projects-store) ──
+  const projectsStore = ctx.projectsStore;
+
+  function replaceTracked(newArray) {
+    tracked.length = 0;
+    for (const p of newArray) tracked.push(p);
+    notifyListeners();
+  }
+
+  function addProject(entry) {
+    if (!projectsStore) return tracked;
+    const next = projectsStore.addProject(tracked, entry);
+    replaceTracked(next);
+    return next;
+  }
+
+  function updateProject(index, patch) {
+    if (!projectsStore) return tracked;
+    const next = projectsStore.updateProject(tracked, index, patch);
+    replaceTracked(next);
+    return next;
+  }
+
+  function removeProject(index) {
+    if (!projectsStore) return tracked;
+    const next = projectsStore.removeProject(tracked, index);
+    replaceTracked(next);
+    return next;
+  }
+
   // ── Initialize ──
   load();
 
@@ -260,6 +290,7 @@ return function createSessionManagerCore({ persistSave, persistLoad }) {
     createSession, moveSession, getSession, removeSession,
     getAllSessions, getActiveSessionId, setActiveSession, getActiveSession,
     getProject, getProjectColor, getProjectIcon,
+    addProject, updateProject, removeProject,
     save: saveDebouncedFn, saveImmediate, load,
     onChange, cleanup,
     get tracked() { return tracked; },
