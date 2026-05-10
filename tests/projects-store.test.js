@@ -32,6 +32,12 @@ function freshSandbox(name) {
   return dir;
 }
 
+function bootstrapStore(name) {
+  const dir = freshSandbox(name);
+  const ctx = makeCtx({ configDir: dir });
+  return { dir, store: loadStore(ctx) };
+}
+
 function runTest(name, fn) {
   try {
     fn();
@@ -45,9 +51,7 @@ function runTest(name, fn) {
 
 // ── 1. write() creates config.local.json when missing ──
 runTest("write creates config.local.json when missing", () => {
-  const dir = freshSandbox("t1");
-  const ctx = makeCtx({ configDir: dir });
-  const store = loadStore(ctx);
+  const { dir, store } = bootstrapStore("t1");
   const arr = [{ dir: "-Users-foo", label: "Foo" }];
   store.write(arr);
   const written = JSON.parse(fs.readFileSync(path.join(dir, "config.local.json"), "utf8"));
@@ -56,13 +60,11 @@ runTest("write creates config.local.json when missing", () => {
 
 // ── 2. write() preserves unrelated keys ──
 runTest("write preserves unrelated keys in config.local.json", () => {
-  const dir = freshSandbox("t2");
+  const { dir, store } = bootstrapStore("t2");
   fs.writeFileSync(path.join(dir, "config.local.json"), JSON.stringify({
     network: { token: "abc" },
     projects: { tracked: [{ dir: "-old", label: "Old" }] },
   }, null, 2));
-  const ctx = makeCtx({ configDir: dir });
-  const store = loadStore(ctx);
   store.write([{ dir: "-new", label: "New" }]);
   const written = JSON.parse(fs.readFileSync(path.join(dir, "config.local.json"), "utf8"));
   assert.strictEqual(written.network.token, "abc");
@@ -71,9 +73,7 @@ runTest("write preserves unrelated keys in config.local.json", () => {
 
 // ── 3. write() is atomic (uses tmp + rename) ──
 runTest("write uses tmp file then rename", () => {
-  const dir = freshSandbox("t3");
-  const ctx = makeCtx({ configDir: dir });
-  const store = loadStore(ctx);
+  const { dir, store } = bootstrapStore("t3");
   store.write([{ dir: "-x", label: "X" }]);
   // After write, no .tmp file should be left behind
   const tmpExists = fs.existsSync(path.join(dir, "config.local.json.tmp"));
@@ -84,9 +84,7 @@ runTest("write uses tmp file then rename", () => {
 
 // ── 4. addProject appends to current tracked ──
 runTest("addProject appends to provided tracked array", () => {
-  const dir = freshSandbox("t4");
-  const ctx = makeCtx({ configDir: dir });
-  const store = loadStore(ctx);
+  const { dir, store } = bootstrapStore("t4");
   const current = [{ dir: "-a", label: "A" }];
   const next = store.addProject(current, { dir: "-b", label: "B" });
   assert.deepStrictEqual(next, [
@@ -100,19 +98,17 @@ runTest("addProject appends to provided tracked array", () => {
 
 // ── 5. addProject is a no-op when dir already tracked ──
 runTest("addProject ignores duplicate dir", () => {
-  const dir = freshSandbox("t5");
-  const ctx = makeCtx({ configDir: dir });
-  const store = loadStore(ctx);
+  const { dir, store } = bootstrapStore("t5");
   const current = [{ dir: "-a", label: "A" }];
   const next = store.addProject(current, { dir: "-a", label: "Different" });
   assert.deepStrictEqual(next, current);
+  // No-op should not have created the config file
+  assert.strictEqual(fs.existsSync(path.join(dir, "config.local.json")), false);
 });
 
 // ── 6. updateProject patches by index ──
 runTest("updateProject patches the entry at index", () => {
-  const dir = freshSandbox("t6");
-  const ctx = makeCtx({ configDir: dir });
-  const store = loadStore(ctx);
+  const { store } = bootstrapStore("t6");
   const current = [
     { dir: "-a", label: "A" },
     { dir: "-b", label: "B" },
@@ -126,9 +122,7 @@ runTest("updateProject patches the entry at index", () => {
 
 // ── 7. removeProject splices out the index ──
 runTest("removeProject splices out the entry at index", () => {
-  const dir = freshSandbox("t7");
-  const ctx = makeCtx({ configDir: dir });
-  const store = loadStore(ctx);
+  const { store } = bootstrapStore("t7");
   const current = [
     { dir: "-a", label: "A" },
     { dir: "-b", label: "B" },
@@ -143,33 +137,27 @@ runTest("removeProject splices out the entry at index", () => {
 
 // ── 8. encodePath converts /Users/foo/bar → -Users-foo-bar ──
 runTest("encodePath produces dash-encoded form", () => {
-  const dir = freshSandbox("t8");
-  const ctx = makeCtx({ configDir: dir });
-  const store = loadStore(ctx);
+  const { store } = bootstrapStore("t8");
   assert.strictEqual(store.encodePath("/Users/foo/bar"), "-Users-foo-bar");
   assert.strictEqual(store.encodePath("/a/b"), "-a-b");
 });
 
 // ── 9. decodeLabel derives the last segment ──
 runTest("decodeLabel returns last segment of dash-encoded dir", () => {
-  const dir = freshSandbox("t9");
-  const ctx = makeCtx({ configDir: dir });
-  const store = loadStore(ctx);
+  const { store } = bootstrapStore("t9");
   assert.strictEqual(store.decodeLabel("-Users-foo-my-project"), "my-project");
   assert.strictEqual(store.decodeLabel("-foo"), "foo");
 });
 
 // ── 10. scanAvailable lists dirs minus already-tracked ──
 runTest("scanAvailable returns untracked dirs from rootPath", () => {
-  const dir = freshSandbox("t10");
+  const { dir, store } = bootstrapStore("t10");
   const root = path.join(dir, "claude-projects");
   fs.mkdirSync(root, { recursive: true });
   fs.mkdirSync(path.join(root, "-Users-a"));
   fs.mkdirSync(path.join(root, "-Users-b"));
   fs.mkdirSync(path.join(root, "-Users-c"));
   fs.writeFileSync(path.join(root, "not-a-project"), "x"); // no leading dash, ignored
-  const ctx = makeCtx({ configDir: dir });
-  const store = loadStore(ctx);
   const available = store.scanAvailable(root, ["-Users-b"]);
   const dirs = available.map(p => p.dir).sort();
   assert.deepStrictEqual(dirs, ["-Users-a", "-Users-c"]);
