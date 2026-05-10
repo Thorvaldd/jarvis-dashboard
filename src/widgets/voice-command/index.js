@@ -39,6 +39,7 @@ const [
   { createProcessManager },
   { createSessionTabs },
   { createProjectSelector },
+  { createManageProjectsModal },
 ] = await Promise.all([
   loadSub("core/utilities.js"),
   loadSub("core/state-machine.js"),
@@ -55,6 +56,7 @@ const [
   loadSub("desktop/process-manager.js"),
   loadSub("core/session-tabs.js"),
   loadSub("core/project-selector.js"),
+  loadSub("core/manage-projects-modal.js"),
 ]);
 
 // ── Shared state ──
@@ -177,6 +179,27 @@ const projSelector = createProjectSelector({
   isDisabled: () => uiState === "streaming" || uiState === "launching" || uiState === "recording" || uiState === "transcribing",
 });
 
+const manageModal = createManageProjectsModal();
+ctx.cleanups.push(() => manageModal.close());
+
+// Gear icon — opens the manage-projects modal. Hidden in auto-discovery mode.
+const isManualMode = (config.projects?.mode || "manual") === "manual";
+const gearBtn = el("div", {
+  display: isManualMode ? "flex" : "none",
+  alignItems: "center", justifyContent: "center",
+  padding: "6px 10px",
+  marginLeft: "6px",
+  cursor: "pointer",
+  fontSize: "14px", color: T.textMuted,
+  borderRadius: "6px",
+  transition: "color 0.15s ease, background 0.15s ease",
+  flexShrink: "0",
+}, "⚙");
+gearBtn.title = "Manage projects";
+gearBtn.addEventListener("mouseenter", () => { gearBtn.style.color = T.accent; });
+gearBtn.addEventListener("mouseleave", () => { gearBtn.style.color = T.textMuted; });
+gearBtn.addEventListener("click", (e) => { e.stopPropagation(); manageModal.open(); });
+
 const tabs = createSessionTabs({
   onSwitch: (id) => switchToSession(id),
   onClose: (id) => closeSession(id),
@@ -198,11 +221,27 @@ if (ctx._statusLineUpdate) {
 }
 
 // ── Assemble DOM ──
-section.appendChild(projSelector.el.selector);
+const projectRow = el("div", {
+  display: "flex", alignItems: "center", gap: "0",
+  marginTop: "12px",
+});
+// Reset the selector's own marginTop because the row owns it now
+projSelector.el.selector.style.marginTop = "0";
+projectRow.appendChild(projSelector.el.selector);
+projectRow.appendChild(gearBtn);
+section.appendChild(projectRow);
 section.appendChild(textInput.el.row);
 if (connBar) section.appendChild(connBar.el.bar);
 section.appendChild(terminal.el.panel);
 terminal.el.panel.appendChild(tabs.el.tabBar);
+
+// Second gear — visible inside the tab row when project-selector is not shown
+const tabsGearBtn = gearBtn.cloneNode(true);
+tabsGearBtn.addEventListener("click", (e) => { e.stopPropagation(); manageModal.open(); });
+tabsGearBtn.addEventListener("mouseenter", () => { tabsGearBtn.style.color = T.accent; });
+tabsGearBtn.addEventListener("mouseleave", () => { tabsGearBtn.style.color = T.textMuted; });
+tabsGearBtn.style.marginLeft = "auto";
+if (isManualMode) tabs.el.tabBar.appendChild(tabsGearBtn);
 
 // Decorative line
 section.appendChild(el("div", {
