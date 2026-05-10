@@ -39,15 +39,16 @@ function addProject(current, entry) {
 
 function updateProject(current, index, patch) {
   if (index < 0 || index >= current.length) return current;
-  const next = current.map((p, i) => i === index ? { ...p, ...patch } : p);
-  // Strip empty-string keys so falling back to default behavior works
-  const cleaned = next.map(p => {
-    const out = {};
-    for (const k of Object.keys(p)) if (p[k] !== "" && p[k] != null) out[k] = p[k];
-    return out;
-  });
-  write(cleaned);
-  return cleaned;
+  // Apply patch, then strip empty-string/null keys ONLY from the patched entry
+  // so callers can clear an override (icon = "" → falls back to default palette).
+  const merged = { ...current[index], ...patch };
+  const cleaned = {};
+  for (const k of Object.keys(merged)) {
+    if (merged[k] !== "" && merged[k] != null) cleaned[k] = merged[k];
+  }
+  const next = current.map((p, i) => i === index ? cleaned : p);
+  write(next);
+  return next;
 }
 
 function removeProject(current, index) {
