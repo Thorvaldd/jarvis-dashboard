@@ -104,6 +104,7 @@ const ctx = {
   cleanups: [],
   _paused: false,
   _srcDir: srcDir + "/",
+  _configDir: nodePath.join(srcDir, "config"),
   _adapter: {
     readFile(path) { return nodeFs.readFileSync(path, "utf8"); },
     readFileAsync(path) { return nodeFs.readFileSync(path, "utf8"); },
@@ -128,6 +129,7 @@ ctx.voiceService = await loadModule("services/voice-service.js")(ctx);
 ctx.cleanups.push(() => ctx.voiceService.cleanup());
 ctx.ttsService = await loadModule("services/tts-service.js")(ctx);
 ctx.cleanups.push(() => ctx.ttsService.cleanup());
+ctx.projectsStore = await loadModule("services/projects-store.js")(ctx);
 ctx._sessionManagerCore = await loadModule("services/session-manager-core.js")(ctx);
 ctx.sessionManager = await loadModule("services/session-manager.js")(ctx);
 ctx.cleanups.push(() => ctx.sessionManager.cleanup());
