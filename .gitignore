@@ -35,3 +35,4 @@ ios/web/shared
 
 # Test sandbox
 tests/.tmp/
+/.omc
