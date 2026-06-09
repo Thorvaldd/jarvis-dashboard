@@ -39,6 +39,25 @@ function loadModule(relativePath) {
 // ── Load config ──
 const config = JSON.parse(nodeFs.readFileSync(nodePath.join(srcDir, "config", "config.json"), "utf8"));
 
+// ── Merge config.local.json (gitignored, holds user-specific overrides) ──
+function deepMergeConfig(target, source) {
+  const result = { ...target };
+  for (const key of Object.keys(source)) {
+    if (source[key] && typeof source[key] === "object" && !Array.isArray(source[key])) {
+      result[key] = deepMergeConfig(result[key] || {}, source[key]);
+    } else {
+      result[key] = source[key];
+    }
+  }
+  return result;
+}
+let _localConfig = {};
+try {
+  _localConfig = JSON.parse(nodeFs.readFileSync(
+    nodePath.join(srcDir, "config", "config.local.json"), "utf8"));
+  Object.assign(config, deepMergeConfig(config, _localConfig));
+} catch {}
+
 // ── Load core: theme ──
 const themeResult = await loadModule("core/theme.js")({ container, config });
 const { T, isNarrow, isMedium, isWide, CARD_PAD, FONT_SM, leafEl } = themeResult;
@@ -85,6 +104,7 @@ const ctx = {
   cleanups: [],
   _paused: false,
   _srcDir: srcDir + "/",
+  _configDir: nodePath.join(srcDir, "config"),
   _adapter: {
     readFile(path) { return nodeFs.readFileSync(path, "utf8"); },
     readFileAsync(path) { return nodeFs.readFileSync(path, "utf8"); },
@@ -109,30 +129,14 @@ ctx.voiceService = await loadModule("services/voice-service.js")(ctx);
 ctx.cleanups.push(() => ctx.voiceService.cleanup());
 ctx.ttsService = await loadModule("services/tts-service.js")(ctx);
 ctx.cleanups.push(() => ctx.ttsService.cleanup());
+ctx.projectsStore = await loadModule("services/projects-store.js")(ctx);
 ctx._sessionManagerCore = await loadModule("services/session-manager-core.js")(ctx);
 ctx.sessionManager = await loadModule("services/session-manager.js")(ctx);
 ctx.cleanups.push(() => ctx.sessionManager.cleanup());
 
 // ── Load network client for remote voice mode ──
 if (config.widgets?.voiceCommand?.mode === "remote") {
-  let localConfig = {};
-  try {
-    localConfig = JSON.parse(nodeFs.readFileSync(
-      nodePath.join(srcDir, "config", "config.local.json"), "utf8"));
-    function deepMerge(target, source) {
-      const result = { ...target };
-      for (const key of Object.keys(source)) {
-        if (source[key] && typeof source[key] === "object" && !Array.isArray(source[key])) {
-          result[key] = deepMerge(result[key] || {}, source[key]);
-        } else {
-          result[key] = source[key];
-        }
-      }
-      return result;
-    }
-    Object.assign(config, deepMerge(config, localConfig));
-  } catch {}
-  ctx._localConfig = localConfig;
+  ctx._localConfig = _localConfig;
   ctx.networkClient = await loadModule("services/network-client.js")(ctx);
   ctx.cleanups.push(() => ctx.networkClient.cleanup());
 }
@@ -176,6 +180,10 @@ const WIDGET_MAP = {
   "mission-control":       "widgets/mission-control/index.js",
   "recent-activity":       "widgets/recent-activity/index.js",
   "jarvis-voice-command":  "widgets/voice-command/index.js",
+  "rize-week":             "widgets/rize-week/index.js",
+  "littlebird-paste":      "widgets/littlebird-paste/index.js",
+  "weekly-review":         "widgets/weekly-review/index.js",
+  "manage-projects":       "widgets/manage-projects/index.js",
   "footer":                "widgets/footer/index.js",
 };
 
@@ -201,6 +209,36 @@ const layout = config.layout || [
 
 const gridRefs = [];
 
+// Render one widget by type, isolated in a try/catch so a single failure
+// can't black-hole the rest of the dashboard. On failure, render a small
+// red error card with the message so the user can see which widget broke.
+async function renderWidgetSafe(widgetType, target, opts) {
+  try {
+    const widget = await loadModule(WIDGET_MAP[widgetType])(ctx);
+    if (widget && widget.style) {
+      if (opts && opts.zeroBottomMargin) widget.style.marginBottom = "0";
+      widget.style.contain = "layout style";
+      if (DEFERRED_WIDGETS.has(widgetType)) {
+        widget.style.contentVisibility = "auto";
+      }
+    }
+    target.appendChild(widget);
+  } catch (e) {
+    console.error(`[JARVIS] Widget '${widgetType}' failed to render:`, e);
+    const errEl = el("div", {
+      border: `1px solid ${T.red}55`,
+      background: "rgba(231,76,60,0.06)",
+      color: T.red,
+      borderRadius: "8px",
+      padding: "10px 14px",
+      fontSize: "12px",
+      fontFamily: "'SF Mono', 'Fira Code', monospace",
+      marginBottom: opts && opts.zeroBottomMargin ? "0" : "16px",
+    }, `[${widgetType}] ${e && e.message ? e.message : String(e)}`);
+    target.appendChild(errEl);
+  }
+}
+
 for (const entry of layout) {
   if (entry.type === "row" && entry.widgets) {
     const row = el("div", {
@@ -214,28 +252,13 @@ for (const entry of layout) {
     });
     for (const widgetType of entry.widgets) {
       if (WIDGET_MAP[widgetType]) {
-        const widget = await loadModule(WIDGET_MAP[widgetType])(ctx);
-        if (widget.style) {
-          widget.style.marginBottom = "0";
-          widget.style.contain = "layout style";
-          if (DEFERRED_WIDGETS.has(widgetType)) {
-            widget.style.contentVisibility = "auto";
-          }
-        }
-        row.appendChild(widget);
+        await renderWidgetSafe(widgetType, row, { zeroBottomMargin: true });
       }
     }
     wrapper.appendChild(row);
     gridRefs.push({ el: row, columns: entry.columns || 2 });
   } else if (WIDGET_MAP[entry.type]) {
-    const widget = await loadModule(WIDGET_MAP[entry.type])(ctx);
-    if (widget.style) {
-      widget.style.contain = "layout style";
-      if (DEFERRED_WIDGETS.has(entry.type)) {
-        widget.style.contentVisibility = "auto";
-      }
-    }
-    wrapper.appendChild(widget);
+    await renderWidgetSafe(entry.type, wrapper, { zeroBottomMargin: false });
   }
 }
 
@@ -334,5 +357,5 @@ const ro = new ResizeObserver(() => {
   });
 });
 ro.observe(resizeTarget);
-} // end __jarvis__ block
+} /* end __jarvis__ block */
 ```

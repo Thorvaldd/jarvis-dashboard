@@ -31,15 +31,15 @@
   },
   "layout": [
     { "type": "header" },
-    { "type": "jarvis-voice-command" },
+    { "type": "manage-projects" },
     { "type": "live-sessions" },
+    { "type": "rize-week" },
     { "type": "row", "columns": 2, "widgets": ["focus-timer", "quick-capture"] },
+    { "type": "littlebird-paste" },
+    { "type": "weekly-review" },
     { "type": "agent-cards" },
-    { "type": "communication-link" },
-    { "type": "row", "columns": 2, "widgets": ["quick-launch", "mission-control"] },
     { "type": "system-diagnostics" },
     { "type": "activity-analytics" },
-    { "type": "recent-activity" },
     { "type": "footer" }
   ],
   "widgets": {
@@ -155,7 +155,28 @@
     "systemDiagnostics": {
       "periodDays": 30,
       "cacheDurationMs": 300000
+    },
+    "rizeWeek": {
+      "topEntries": 8
     }
+  },
+  "rize": {
+    "apiBaseUrl": "https://api.rize.io",
+    "graphqlPath": "/api/v1/graphql",
+    "cacheDurationMs": 300000,
+    "secretsFile": "~/.jarvis/secrets.json",
+    "timezone": null,
+    "projectMapping": {
+      "AcmeCorp": ["AC-", "AcmeCorp", "Acme project"],
+      "ExampleCo": ["EC-", "ExampleCo"],
+      "DemoLLC": ["DL-", "DemoLLC"]
+    }
+  },
+  "weeklyReview": {
+    "outputFolder": "Weekly",
+    "memoryFile": "memory.md",
+    "promptsPerSessionInReview": 5,
+    "preserveSectionsAfter": "## Notes"
   },
   "network": {
     "host": "your-mac.local",

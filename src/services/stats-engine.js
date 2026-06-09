@@ -11,13 +11,11 @@ const pricing = config.pricing || {
   haiku:  { input: 0.80, output: 4 },
 };
 
-function getStatsDir() {
+function getProjectsRoot() {
   const rootPath = config.projects.rootPath.startsWith("~")
     ? nodePath.join(require("os").homedir(), config.projects.rootPath.slice(1))
     : config.projects.rootPath;
-  const tracked = ctx.sessionParser.getTrackedProjects();
-  if (tracked.length === 0) return null;
-  return nodePath.join(rootPath, tracked[0].dir);
+  return { rootPath, tracked: ctx.sessionParser.getTrackedProjects() };
 }
 
 function parseFullSession(filePath) {
@@ -120,10 +118,10 @@ function aggregateStats(cache) {
 }
 
 function computeStats() {
-  const statsDir = getStatsDir();
-  if (!statsDir) return aggregateStats({ sessions: {} });
+  const { rootPath, tracked } = getProjectsRoot();
+  if (tracked.length === 0) return aggregateStats({ sessions: {} });
 
-  const cachePath = nodePath.join(statsDir, "jarvis-dashboard-cache.json");
+  const cachePath = nodePath.join(rootPath, "jarvis-dashboard-cache.json");
   let cache = { computedAt: 0, sessions: {} };
   try { cache = JSON.parse(nodeFs.readFileSync(cachePath, "utf8")); } catch {}
 
@@ -132,20 +130,25 @@ function computeStats() {
 
   const periodDays = config.widgets?.systemDiagnostics?.periodDays || 30;
   const cutoff = Date.now() - periodDays * 86400000;
-  let files;
-  try {
-    files = nodeFs.readdirSync(statsDir)
-      .filter(f => f.endsWith(".jsonl"))
-      .map(f => { try { return { name: f, mtime: nodeFs.statSync(nodePath.join(statsDir, f)).mtimeMs }; } catch { return null; } })
-      .filter(f => f && f.mtime >= cutoff);
-  } catch { return aggregateStats(cache); }
 
   const newCache = { computedAt: Date.now(), sessions: {} };
-  for (const file of files) {
-    if (cache.sessions[file.name] && cache.sessions[file.name].mtime === file.mtime) {
-      newCache.sessions[file.name] = cache.sessions[file.name];
-    } else {
-      newCache.sessions[file.name] = parseFullSession(nodePath.join(statsDir, file.name));
+  for (const proj of tracked) {
+    const statsDir = nodePath.join(rootPath, proj.dir);
+    let files;
+    try {
+      files = nodeFs.readdirSync(statsDir)
+        .filter(f => f.endsWith(".jsonl"))
+        .map(f => { try { return { name: f, mtime: nodeFs.statSync(nodePath.join(statsDir, f)).mtimeMs }; } catch { return null; } })
+        .filter(f => f && f.mtime >= cutoff);
+    } catch { continue; }
+
+    for (const file of files) {
+      const key = `${proj.dir}/${file.name}`;
+      if (cache.sessions[key] && cache.sessions[key].mtime === file.mtime) {
+        newCache.sessions[key] = cache.sessions[key];
+      } else {
+        newCache.sessions[key] = parseFullSession(nodePath.join(statsDir, file.name));
+      }
     }
   }
 

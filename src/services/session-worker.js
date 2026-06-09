@@ -321,8 +321,8 @@ function computeStats(config) {
 
   if (tracked.length === 0) return aggregateStats({ sessions: {} });
 
-  const statsDir = path.join(rootPath, tracked[0].dir);
-  const cachePath = path.join(statsDir, "jarvis-dashboard-cache.json");
+  // Combined cache at rootPath so multiple project dirs share it
+  const cachePath = path.join(rootPath, "jarvis-dashboard-cache.json");
   let cache = { computedAt: 0, sessions: {} };
   try { cache = JSON.parse(fs.readFileSync(cachePath, "utf8")); } catch {}
 
@@ -331,20 +331,25 @@ function computeStats(config) {
 
   const periodDays = config.widgets?.systemDiagnostics?.periodDays || 30;
   const cutoff = Date.now() - periodDays * 86400000;
-  let files;
-  try {
-    files = fs.readdirSync(statsDir)
-      .filter(f => f.endsWith(".jsonl"))
-      .map(f => { try { return { name: f, mtime: fs.statSync(path.join(statsDir, f)).mtimeMs }; } catch { return null; } })
-      .filter(f => f && f.mtime >= cutoff);
-  } catch { return aggregateStats(cache); }
 
   const newCache = { computedAt: Date.now(), sessions: {} };
-  for (const file of files) {
-    if (cache.sessions[file.name] && cache.sessions[file.name].mtime === file.mtime) {
-      newCache.sessions[file.name] = cache.sessions[file.name];
-    } else {
-      newCache.sessions[file.name] = parseFullSession(path.join(statsDir, file.name), pricing);
+  for (const proj of tracked) {
+    const statsDir = path.join(rootPath, proj.dir);
+    let files;
+    try {
+      files = fs.readdirSync(statsDir)
+        .filter(f => f.endsWith(".jsonl"))
+        .map(f => { try { return { name: f, mtime: fs.statSync(path.join(statsDir, f)).mtimeMs }; } catch { return null; } })
+        .filter(f => f && f.mtime >= cutoff);
+    } catch { continue; }
+
+    for (const file of files) {
+      const key = `${proj.dir}/${file.name}`;
+      if (cache.sessions[key] && cache.sessions[key].mtime === file.mtime) {
+        newCache.sessions[key] = cache.sessions[key];
+      } else {
+        newCache.sessions[key] = parseFullSession(path.join(statsDir, file.name), pricing);
+      }
     }
   }
 
